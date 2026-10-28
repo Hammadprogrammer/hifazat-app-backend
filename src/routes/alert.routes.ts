@@ -6,6 +6,7 @@ import {
   getAlertHistory,
   getActiveAlert,
   getAlertById,
+  trackAlert,
   cancelAlert,
   markSafe,
   updateAlertLocation,
@@ -19,6 +20,7 @@ router.use(authenticate);
 router.post('/trigger', sosRateLimiter, triggerAlert);
 router.get('/history', getAlertHistory);
 router.get('/active', getActiveAlert);
+router.get('/:id/track', trackAlert);
 router.get('/:id', getAlertById);
 router.post('/:id/cancel', cancelAlert);
 router.post('/:id/safe', markSafe);

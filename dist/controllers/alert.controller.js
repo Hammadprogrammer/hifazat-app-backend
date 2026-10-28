@@ -7,12 +7,23 @@ exports.triggerAlert = triggerAlert;
 exports.getAlertHistory = getAlertHistory;
 exports.getActiveAlert = getActiveAlert;
 exports.getAlertById = getAlertById;
+exports.trackAlert = trackAlert;
 exports.cancelAlert = cancelAlert;
 exports.markSafe = markSafe;
 exports.updateAlertLocation = updateAlertLocation;
 exports.getAlertLocations = getAlertLocations;
 const db_1 = __importDefault(require("../config/db"));
 const notification_service_1 = require("../services/notification.service");
+/** Real GPS fix only: finite, in range, and not the (0,0) "null island" default. */
+function isValidCoords(lat, lng) {
+    return (typeof lat === 'number' &&
+        typeof lng === 'number' &&
+        Number.isFinite(lat) &&
+        Number.isFinite(lng) &&
+        Math.abs(lat) <= 90 &&
+        Math.abs(lng) <= 180 &&
+        !(lat === 0 && lng === 0));
+}
 function buildAlertMessage(userName, latitude, longitude, customMessage) {
     const lines = [`${userName} has triggered an SOS and may need immediate help.`];
     if (customMessage) {
@@ -30,7 +41,11 @@ function buildAlertMessage(userName, latitude, longitude, customMessage) {
 /** POST /api/alerts/trigger — sends an in-app alert (push + inbox) to all registered emergency contacts */
 async function triggerAlert(req, res) {
     try {
-        const { latitude, longitude, message, address, source } = req.body;
+        const body = req.body;
+        const { message, address, source } = body;
+        const coords = isValidCoords(body.latitude, body.longitude) ? body : null;
+        const latitude = coords?.latitude ?? null;
+        const longitude = coords?.longitude ?? null;
         const user = await db_1.default.user.findUnique({
             where: { id: req.userId },
             include: { contacts: true },
@@ -49,8 +64,8 @@ async function triggerAlert(req, res) {
         const alert = await db_1.default.alert.create({
             data: {
                 userId: user.id,
-                latitude: latitude ?? null,
-                longitude: longitude ?? null,
+                latitude,
+                longitude,
                 address: address?.trim() || null,
                 message: message?.trim() || null,
                 source: source?.trim() || 'sos',
@@ -59,7 +74,7 @@ async function triggerAlert(req, res) {
         });
         if (latitude != null && longitude != null) {
             await db_1.default.alertLocation.create({
-                data: { alertId: alert.id, latitude, longitude },
+                data: { alertId: alert.id, latitude, longitude, accuracy: coords?.accuracy ?? null },
             });
         }
         const { dispatches, skipped } = await (0, notification_service_1.notifyContacts)(user.id, {
@@ -67,8 +82,8 @@ async function triggerAlert(req, res) {
             title: '🚨 HIFAZAT EMERGENCY ALERT',
             body: buildAlertMessage(user.name, latitude, longitude, message),
             alertId: alert.id,
-            latitude: latitude ?? null,
-            longitude: longitude ?? null,
+            latitude,
+            longitude,
         });
         const status = dispatches.length === 0 ? 'FAILED' : skipped.length === 0 ? 'SENT' : 'PARTIAL';
         const updated = await db_1.default.alert.update({
@@ -149,6 +164,63 @@ async function getAlertById(req, res) {
         res.status(500).json({ success: false, message: 'Failed to fetch alert' });
     }
 }
+/**
+ * GET /api/alerts/:id/track — live tracking view for the alert owner OR any
+ * emergency contact who received a notification for this alert.
+ * Returns the sender, alert status, latest real GPS fix and recent trail.
+ */
+async function trackAlert(req, res) {
+    try {
+        const id = String(req.params.id);
+        const alert = await db_1.default.alert.findUnique({
+            where: { id },
+            include: {
+                user: { select: { id: true, name: true, phone: true } },
+                locations: { orderBy: { recordedAt: 'desc' }, take: 50 },
+            },
+        });
+        if (!alert) {
+            res.status(404).json({ success: false, message: 'Alert not found' });
+            return;
+        }
+        const isOwner = alert.userId === req.userId;
+        const isRecipient = isOwner
+            ? true
+            : Boolean(await db_1.default.notification.findFirst({
+                where: { alertId: id, recipientId: req.userId },
+                select: { id: true },
+            }));
+        if (!isRecipient) {
+            res.status(403).json({ success: false, message: 'You are not allowed to track this alert' });
+            return;
+        }
+        const latest = alert.locations[0] ?? null;
+        res.json({
+            success: true,
+            data: {
+                alert: {
+                    id: alert.id,
+                    status: alert.status,
+                    source: alert.source,
+                    message: alert.message,
+                    address: alert.address,
+                    createdAt: alert.createdAt,
+                    cancelledAt: alert.cancelledAt,
+                    resolvedAt: alert.resolvedAt,
+                },
+                sender: alert.user,
+                isOwner,
+                active: ACTIVE_STATUSES.includes(alert.status),
+                latest,
+                trail: [...alert.locations].reverse(),
+            },
+        });
+    }
+    catch (err) {
+        console.error('[alert.trackAlert]', err);
+        res.status(500).json({ success: false, message: 'Failed to track alert' });
+    }
+}
 /** POST /api/alerts/:id/cancel — false alarm */
 async function cancelAlert(req, res) {
     try {
@@ -219,11 +291,14 @@ async function markSafe(req, res) {
 async function updateAlertLocation(req, res) {
     try {
         const id = String(req.params.id);
-        const { latitude, longitude, accuracy, heading, speed } = req.body;
-        if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-            res.status(400).json({ success: false, message: 'latitude and longitude are required' });
+        const body = req.body;
+        if (!isValidCoords(body.latitude, body.longitude)) {
+            res.status(400).json({ success: false, message: 'A valid latitude and longitude are required' });
             return;
         }
+        const latitude = body.latitude;
+        const longitude = body.longitude;
+        const { accuracy, heading, speed } = body;
         const existing = await db_1.default.alert.findFirst({ where: { id, userId: req.userId } });
         if (!existing) {
             res.status(404).json({ success: false, message: 'Alert not found' });

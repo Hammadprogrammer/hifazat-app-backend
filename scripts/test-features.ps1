@@ -46,6 +46,9 @@ Write-Host "== B mark read"; J (Call POST "/notifications/$nid/read" $null $tokB
 Write-Host "== alert active"; J (Call GET '/alerts/active' $null $tok)
 Write-Host "== alert location"; J (Call POST "/alerts/$aid/location" @{ latitude=31.53; longitude=74.36; accuracy=10 } $tok)
 Write-Host "== alert locations"; J (Call GET "/alerts/$aid/locations" $null $tok)
+Write-Host "== alert location invalid (should 400)"; J (Call POST "/alerts/$aid/location" @{ latitude=0; longitude=0 } $tok)
+Write-Host "== track as owner A"; $tr = Call GET "/alerts/$aid/track" $null $tok; J @{ isOwner=$tr.data.isOwner; active=$tr.data.active; latest=$tr.data.latest.latitude; trail=$tr.data.trail.Count }
+Write-Host "== track as contact B (allowed)"; $trb = Call GET "/alerts/$aid/track" $null $tokB; J @{ isOwner=$trb.data.isOwner; sender=$trb.data.sender.name; latest=$trb.data.latest.latitude }
 Write-Host "== alert safe"; J (Call POST "/alerts/$aid/safe" $null $tok)
 Write-Host "== B notifications unread (expect SOS_SAFE)"; J (Call GET '/notifications?unread=1' $null $tokB)
 Write-Host "== B read-all"; J (Call POST '/notifications/read-all' $null $tokB)

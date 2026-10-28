@@ -3,6 +3,19 @@ import prisma from '../config/db';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { notifyContacts } from '../services/notification.service';
 
+/** Real GPS fix only: finite, in range, and not the (0,0) "null island" default. */
+function isValidCoords(lat?: unknown, lng?: unknown): boolean {
+  return (
+    typeof lat === 'number' &&
+    typeof lng === 'number' &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lng) <= 180 &&
+    !(lat === 0 && lng === 0)
+  );
+}
+
 function buildAlertMessage(
   userName: string,
   latitude?: number | null,
@@ -28,13 +41,18 @@ function buildAlertMessage(
 /** POST /api/alerts/trigger — sends an in-app alert (push + inbox) to all registered emergency contacts */
 export async function triggerAlert(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const { latitude, longitude, message, address, source } = req.body as {
+    const body = req.body as {
       latitude?: number;
       longitude?: number;
+      accuracy?: number;
       message?: string;
       address?: string;
       source?: string;
     };
+    const { message, address, source } = body;
+    const coords = isValidCoords(body.latitude, body.longitude) ? body : null;
+    const latitude = (coords?.latitude as number | undefined) ?? null;
+    const longitude = (coords?.longitude as number | undefined) ?? null;
 
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
@@ -57,8 +75,8 @@ export async function triggerAlert(req: AuthenticatedRequest, res: Response): Pr
     const alert = await prisma.alert.create({
       data: {
         userId: user.id,
-        latitude: latitude ?? null,
-        longitude: longitude ?? null,
+        latitude,
+        longitude,
         address: address?.trim() || null,
         message: message?.trim() || null,
         source: source?.trim() || 'sos',
@@ -68,7 +86,7 @@ export async function triggerAlert(req: AuthenticatedRequest, res: Response): Pr
 
     if (latitude != null && longitude != null) {
       await prisma.alertLocation.create({
-        data: { alertId: alert.id, latitude, longitude },
+        data: { alertId: alert.id, latitude, longitude, accuracy: coords?.accuracy ?? null },
       });
     }
 
@@ -77,8 +95,8 @@ export async function triggerAlert(req: AuthenticatedRequest, res: Response): Pr
       title: '🚨 HIFAZAT EMERGENCY ALERT',
       body: buildAlertMessage(user.name, latitude, longitude, message),
       alertId: alert.id,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
+      latitude,
+      longitude,
     });
 
     const status =
@@ -166,6 +184,67 @@ export async function getAlertById(req: AuthenticatedRequest, res: Response): Pr
   }
 }
 
+/**
+ * GET /api/alerts/:id/track — live tracking view for the alert owner OR any
+ * emergency contact who received a notification for this alert.
+ * Returns the sender, alert status, latest real GPS fix and recent trail.
+ */
+export async function trackAlert(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    const alert = await prisma.alert.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true, phone: true } },
+        locations: { orderBy: { recordedAt: 'desc' }, take: 50 },
+      },
+    });
+    if (!alert) {
+      res.status(404).json({ success: false, message: 'Alert not found' });
+      return;
+    }
+
+    const isOwner = alert.userId === req.userId;
+    const isRecipient = isOwner
+      ? true
+      : Boolean(
+          await prisma.notification.findFirst({
+            where: { alertId: id, recipientId: req.userId },
+            select: { id: true },
+          }),
+        );
+    if (!isRecipient) {
+      res.status(403).json({ success: false, message: 'You are not allowed to track this alert' });
+      return;
+    }
+
+    const latest = alert.locations[0] ?? null;
+    res.json({
+      success: true,
+      data: {
+        alert: {
+          id: alert.id,
+          status: alert.status,
+          source: alert.source,
+          message: alert.message,
+          address: alert.address,
+          createdAt: alert.createdAt,
+          cancelledAt: alert.cancelledAt,
+          resolvedAt: alert.resolvedAt,
+        },
+        sender: alert.user,
+        isOwner,
+        active: (ACTIVE_STATUSES as readonly string[]).includes(alert.status),
+        latest,
+        trail: [...alert.locations].reverse(),
+      },
+    });
+  } catch (err) {
+    console.error('[alert.trackAlert]', err);
+    res.status(500).json({ success: false, message: 'Failed to track alert' });
+  }
+}
+
 /** POST /api/alerts/:id/cancel — false alarm */
 export async function cancelAlert(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -236,17 +315,20 @@ export async function markSafe(req: AuthenticatedRequest, res: Response): Promis
 export async function updateAlertLocation(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const id = String(req.params.id);
-    const { latitude, longitude, accuracy, heading, speed } = req.body as {
+    const body = req.body as {
       latitude?: number;
       longitude?: number;
       accuracy?: number;
       heading?: number;
       speed?: number;
     };
-    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-      res.status(400).json({ success: false, message: 'latitude and longitude are required' });
+    if (!isValidCoords(body.latitude, body.longitude)) {
+      res.status(400).json({ success: false, message: 'A valid latitude and longitude are required' });
       return;
     }
+    const latitude = body.latitude as number;
+    const longitude = body.longitude as number;
+    const { accuracy, heading, speed } = body;
     const existing = await prisma.alert.findFirst({ where: { id, userId: req.userId } });
     if (!existing) {
       res.status(404).json({ success: false, message: 'Alert not found' });

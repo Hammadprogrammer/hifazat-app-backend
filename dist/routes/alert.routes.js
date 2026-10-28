@@ -9,6 +9,7 @@ router.use(auth_middleware_1.authenticate);
 router.post('/trigger', rateLimiter_1.sosRateLimiter, alert_controller_1.triggerAlert);
 router.get('/history', alert_controller_1.getAlertHistory);
 router.get('/active', alert_controller_1.getActiveAlert);
+router.get('/:id/track', alert_controller_1.trackAlert);
 router.get('/:id', alert_controller_1.getAlertById);
 router.post('/:id/cancel', alert_controller_1.cancelAlert);
 router.post('/:id/safe', alert_controller_1.markSafe);
