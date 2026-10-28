@@ -1,8 +1,7 @@
 import { Response } from 'express';
 import prisma from '../config/db';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
-import { sendSms } from '../services/sms.service';
-import { sendWhatsAppMessage } from '../services/whatsapp.service';
+import { notifyContacts } from '../services/notification.service';
 
 function buildAlertMessage(
   userName: string,
@@ -10,10 +9,7 @@ function buildAlertMessage(
   longitude?: number | null,
   customMessage?: string | null,
 ): string {
-  const lines = [
-    '🚨 HIFATZAT EMERGENCY ALERT 🚨',
-    `${userName} has triggered an SOS and may need immediate help.`,
-  ];
+  const lines = [`${userName} has triggered an SOS and may need immediate help.`];
 
   if (customMessage) {
     lines.push(`Message: ${customMessage}`);
@@ -29,7 +25,7 @@ function buildAlertMessage(
   return lines.join('\n');
 }
 
-/** POST /api/alerts/trigger — sends SMS + WhatsApp to all emergency contacts */
+/** POST /api/alerts/trigger — sends an in-app alert (push + inbox) to all registered emergency contacts */
 export async function triggerAlert(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { latitude, longitude, message, address, source } = req.body as {
@@ -76,39 +72,30 @@ export async function triggerAlert(req: AuthenticatedRequest, res: Response): Pr
       });
     }
 
-    const body = buildAlertMessage(user.name, latitude, longitude, message);
+    const { dispatches, skipped } = await notifyContacts(user.id, {
+      type: 'SOS',
+      title: '🚨 HIFAZAT EMERGENCY ALERT',
+      body: buildAlertMessage(user.name, latitude, longitude, message),
+      alertId: alert.id,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+    });
 
-    // Dispatch SMS + WhatsApp to every contact in parallel
-    const dispatches = await Promise.all(
-      user.contacts.map(async (contact) => {
-        const [sms, whatsapp] = await Promise.all([
-          sendSms({ to: contact.phone, body }),
-          sendWhatsAppMessage(contact.phone, body),
-        ]);
-        return {
-          contact: { id: contact.id, name: contact.name, phone: contact.phone },
-          sms: { success: sms.success, error: sms.error },
-          whatsapp: { success: whatsapp.success, error: whatsapp.error },
-        };
-      }),
-    );
-
-    const total = dispatches.length * 2;
-    const delivered = dispatches.reduce(
-      (acc, d) => acc + (d.sms.success ? 1 : 0) + (d.whatsapp.success ? 1 : 0),
-      0,
-    );
-
-    const status = delivered === total ? 'SENT' : delivered > 0 ? 'PARTIAL' : 'FAILED';
+    const status =
+      dispatches.length === 0 ? 'FAILED' : skipped.length === 0 ? 'SENT' : 'PARTIAL';
 
     const updated = await prisma.alert.update({
       where: { id: alert.id },
       data: { status },
     });
 
-    res.status(status === 'FAILED' ? 502 : 200).json({
+    res.status(status === 'FAILED' ? 422 : 200).json({
       success: status !== 'FAILED',
-      data: { alert: updated, dispatches },
+      message:
+        status === 'FAILED'
+          ? 'None of your emergency contacts are registered on HIFAZAT, so no one could be alerted.'
+          : undefined,
+      data: { alert: updated, dispatches, skipped },
     });
   } catch (err) {
     console.error('[alert.triggerAlert]', err);
@@ -179,16 +166,6 @@ export async function getAlertById(req: AuthenticatedRequest, res: Response): Pr
   }
 }
 
-async function notifyContacts(userId: string, body: string): Promise<number> {
-  const contacts = await prisma.contact.findMany({ where: { userId } });
-  await Promise.all(
-    contacts.map((c) =>
-      Promise.all([sendSms({ to: c.phone, body }), sendWhatsAppMessage(c.phone, body)]),
-    ),
-  );
-  return contacts.length;
-}
-
 /** POST /api/alerts/:id/cancel — false alarm */
 export async function cancelAlert(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -209,11 +186,13 @@ export async function cancelAlert(req: AuthenticatedRequest, res: Response): Pro
       where: { id },
       data: { status: 'CANCELLED', cancelledAt: new Date() },
     });
-    const notified = await notifyContacts(
-      req.userId!,
-      `ℹ️ HIFATZAT UPDATE\n${existing.user.name} cancelled the SOS alert — it was a false alarm. No action needed.`,
-    );
-    res.json({ success: true, data: { alert, notified } });
+    const { dispatches, skipped } = await notifyContacts(req.userId!, {
+      type: 'SOS_CANCELLED',
+      title: 'ℹ️ HIFAZAT UPDATE',
+      body: `${existing.user.name} cancelled the SOS alert — it was a false alarm. No action needed.`,
+      alertId: id,
+    });
+    res.json({ success: true, data: { alert, notified: dispatches.length, skipped } });
   } catch (err) {
     console.error('[alert.cancelAlert]', err);
     res.status(500).json({ success: false, message: 'Failed to cancel alert' });
@@ -240,11 +219,13 @@ export async function markSafe(req: AuthenticatedRequest, res: Response): Promis
       where: { id },
       data: { status: 'RESOLVED', resolvedAt: new Date() },
     });
-    const notified = await notifyContacts(
-      req.userId!,
-      `✅ HIFATZAT UPDATE\n${existing.user.name} has confirmed they are SAFE. The emergency is resolved.`,
-    );
-    res.json({ success: true, data: { alert, notified } });
+    const { dispatches, skipped } = await notifyContacts(req.userId!, {
+      type: 'SOS_SAFE',
+      title: '✅ HIFAZAT UPDATE',
+      body: `${existing.user.name} has confirmed they are SAFE. The emergency is resolved.`,
+      alertId: id,
+    });
+    res.json({ success: true, data: { alert, notified: dispatches.length, skipped } });
   } catch (err) {
     console.error('[alert.markSafe]', err);
     res.status(500).json({ success: false, message: 'Failed to mark alert safe' });

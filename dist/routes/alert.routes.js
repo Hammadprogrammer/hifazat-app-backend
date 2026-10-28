@@ -1,0 +1,17 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_middleware_1 = require("../middlewares/auth.middleware");
+const rateLimiter_1 = require("../middlewares/rateLimiter");
+const alert_controller_1 = require("../controllers/alert.controller");
+const router = (0, express_1.Router)();
+router.use(auth_middleware_1.authenticate);
+router.post('/trigger', rateLimiter_1.sosRateLimiter, alert_controller_1.triggerAlert);
+router.get('/history', alert_controller_1.getAlertHistory);
+router.get('/active', alert_controller_1.getActiveAlert);
+router.get('/:id', alert_controller_1.getAlertById);
+router.post('/:id/cancel', alert_controller_1.cancelAlert);
+router.post('/:id/safe', alert_controller_1.markSafe);
+router.post('/:id/location', alert_controller_1.updateAlertLocation);
+router.get('/:id/locations', alert_controller_1.getAlertLocations);
+exports.default = router;

@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_middleware_1 = require("../middlewares/auth.middleware");
+const checkin_controller_1 = require("../controllers/checkin.controller");
+const router = (0, express_1.Router)();
+router.use(auth_middleware_1.authenticate);
+router.get('/', checkin_controller_1.getTodayCheckins);
+router.get('/history', checkin_controller_1.getCheckinHistory);
+router.post('/', checkin_controller_1.createCheckin);
+router.get('/alarms', checkin_controller_1.getAlarms);
+router.put('/alarms/:id', checkin_controller_1.updateAlarm);
+router.get('/score', checkin_controller_1.getSafetyScore);
+exports.default = router;

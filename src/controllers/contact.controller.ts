@@ -4,15 +4,26 @@ import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { isValidE164, normalizePhone } from '../lib/phone';
 
 const MAX_CONTACTS = 2;
+const NOT_REGISTERED_WARNING =
+  'This number is not registered on HIFAZAT. They will not receive in-app alerts until they sign up with this number.';
+
+/** Returns the set of phones (from the given list) that belong to registered users. */
+async function registeredPhones(phones: string[]): Promise<Set<string>> {
+  if (phones.length === 0) return new Set();
+  const users = await prisma.user.findMany({ where: { phone: { in: phones } }, select: { phone: true } });
+  return new Set(users.map((u) => u.phone));
+}
 
 /** GET /api/contacts */
 export async function getContacts(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const contacts = await prisma.contact.findMany({
+    const rows = await prisma.contact.findMany({
       where: { userId: req.userId },
       orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
       select: { id: true, name: true, phone: true, relation: true, priority: true, createdAt: true },
     });
+    const registered = await registeredPhones(rows.map((c) => c.phone));
+    const contacts = rows.map((c) => ({ ...c, isAppUser: registered.has(c.phone) }));
 
     res.json({ success: true, data: { contacts, max: MAX_CONTACTS } });
   } catch (err) {
@@ -43,6 +54,12 @@ export async function addContact(req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
+    const self = await prisma.user.findUnique({ where: { id: req.userId }, select: { phone: true } });
+    if (self?.phone === normalized) {
+      res.status(400).json({ success: false, message: 'You cannot add your own number as an emergency contact' });
+      return;
+    }
+
     const count = await prisma.contact.count({ where: { userId: req.userId } });
     if (count >= MAX_CONTACTS) {
       res.status(400).json({
@@ -60,18 +77,30 @@ export async function addContact(req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
-    const contact = await prisma.contact.create({
-      data: {
-        name: name.trim(),
-        phone: normalized,
-        relation: relation?.trim() || null,
-        priority: prio,
-        userId: req.userId!,
-      },
-      select: { id: true, name: true, phone: true, relation: true, priority: true, createdAt: true },
-    });
+    const [created, appUser] = await Promise.all([
+      prisma.contact.create({
+        data: {
+          name: name.trim(),
+          phone: normalized,
+          relation: relation?.trim() || null,
+          priority: prio,
+          userId: req.userId!,
+        },
+        select: { id: true, name: true, phone: true, relation: true, priority: true, createdAt: true },
+      }),
+      prisma.user.findUnique({ where: { phone: normalized }, select: { id: true } }),
+    ]);
 
-    res.status(201).json({ success: true, data: { contact } });
+    const isAppUser = Boolean(appUser);
+    res.status(201).json({
+      success: true,
+      message: isAppUser ? 'Contact added' : NOT_REGISTERED_WARNING,
+      data: {
+        contact: { ...created, isAppUser },
+        isAppUser,
+        ...(isAppUser ? {} : { warning: NOT_REGISTERED_WARNING }),
+      },
+    });
   } catch (err) {
     console.error('[contact.addContact]', err);
     res.status(500).json({ success: false, message: 'Failed to add contact' });

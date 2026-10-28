@@ -2,8 +2,7 @@ import { Response } from 'express';
 import prisma from '../config/db';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { getTodayDate, subtractDays, computeStreak } from '../lib/dates';
-import { sendSms } from '../services/sms.service';
-import { sendWhatsAppMessage } from '../services/whatsapp.service';
+import { notifyContacts } from '../services/notification.service';
 import { recalculateStreak } from './streak.controller';
 
 const DEFAULT_ALARMS = [
@@ -71,25 +70,23 @@ export async function createCheckin(req: AuthenticatedRequest, res: Response): P
     });
 
     let alertedContacts = 0;
+    let skipped: Awaited<ReturnType<typeof notifyContacts>>['skipped'] = [];
     if (validStatus === 'not_safe') {
-      const user = await prisma.user.findUnique({
-        where: { id: req.userId },
-        include: { contacts: true },
-      });
-      if (user && user.contacts.length > 0) {
-        const body = `⚠️ HIFATZAT CHECK-IN ALERT\n${user.name} marked themselves as NOT SAFE during a scheduled check-in (${checkin.label}). Please contact them immediately.\nTime: ${new Date().toISOString()}`;
-        await Promise.all(
-          user.contacts.map((c) =>
-            Promise.all([sendSms({ to: c.phone, body }), sendWhatsAppMessage(c.phone, body)]),
-          ),
-        );
-        alertedContacts = user.contacts.length;
+      const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { name: true } });
+      if (user) {
+        const result = await notifyContacts(req.userId!, {
+          type: 'CHECKIN_NOT_SAFE',
+          title: '⚠️ HIFAZAT CHECK-IN ALERT',
+          body: `${user.name} marked themselves as NOT SAFE during a scheduled check-in (${checkin.label}). Please contact them immediately.\nTime: ${new Date().toISOString()}`,
+        });
+        alertedContacts = result.dispatches.length;
+        skipped = result.skipped;
       }
     }
 
     await recalculateStreak(req.userId!);
 
-    res.status(201).json({ success: true, data: { checkin, alertedContacts } });
+    res.status(201).json({ success: true, data: { checkin, alertedContacts, skipped } });
   } catch (err) {
     console.error('[checkin.createCheckin]', err);
     res.status(500).json({ success: false, message: 'Failed to record check-in' });

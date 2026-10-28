@@ -1,8 +1,7 @@
 import { Response } from 'express';
 import prisma from '../config/db';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
-import { sendSms } from '../services/sms.service';
-import { sendWhatsAppMessage } from '../services/whatsapp.service';
+import { notifyContacts } from '../services/notification.service';
 
 /** GET /api/trips */
 export async function getTrips(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -106,7 +105,7 @@ export async function notifyOverdue(req: AuthenticatedRequest, res: Response): P
 
     const trip = await prisma.trip.findFirst({
       where: { id, userId: req.userId },
-      include: { user: { include: { contacts: true } } },
+      include: { user: { select: { name: true } } },
     });
     if (!trip) {
       res.status(404).json({ success: false, message: 'Trip not found' });
@@ -128,26 +127,27 @@ export async function notifyOverdue(req: AuthenticatedRequest, res: Response): P
     }
 
     const lines = [
-      '⏰ HIFATZAT TRIP OVERDUE',
       `${trip.user.name} started a trip to "${trip.destination}" and has not confirmed arrival (expected in ${trip.estimatedMinutes} min).`,
     ];
     if (latitude != null && longitude != null) {
       lines.push(`Last location: https://maps.google.com/?q=${latitude},${longitude}`);
     }
     lines.push('Please try to reach them.');
-    const body = lines.join('\n');
 
-    await Promise.all(
-      trip.user.contacts.map((c) =>
-        Promise.all([sendSms({ to: c.phone, body }), sendWhatsAppMessage(c.phone, body)]),
-      ),
-    );
+    const { dispatches, skipped } = await notifyContacts(req.userId!, {
+      type: 'TRIP_OVERDUE',
+      title: '⏰ HIFAZAT TRIP OVERDUE',
+      body: lines.join('\n'),
+      tripId: id,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+    });
 
     const updated = await prisma.trip.update({
       where: { id },
       data: { status: 'overdue', overdueNotified: true },
     });
-    res.json({ success: true, data: { trip: updated, notified: trip.user.contacts.length } });
+    res.json({ success: true, data: { trip: updated, notified: dispatches.length, skipped } });
   } catch (err) {
     console.error('[trip.notifyOverdue]', err);
     res.status(500).json({ success: false, message: 'Failed to send overdue notification' });

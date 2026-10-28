@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_middleware_1 = require("../middlewares/auth.middleware");
+const device_controller_1 = require("../controllers/device.controller");
+const router = (0, express_1.Router)();
+router.use(auth_middleware_1.authenticate);
+router.post('/', device_controller_1.registerDevice);
+router.delete('/:token', device_controller_1.unregisterDevice);
+exports.default = router;

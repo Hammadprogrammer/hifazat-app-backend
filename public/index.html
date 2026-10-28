@@ -111,7 +111,7 @@
   .warn-card { background: rgba(217,119,6,.12); border: 1px solid rgba(217,119,6,.35); border-radius: 16px; padding: 13px 14px; color: var(--amber-txt); font-size: 12.5px; line-height: 1.55; margin-bottom: 12px; }
 
   /* Auth */
-  #auth, #otp-screen { display: flex; flex-direction: column; justify-content: center; padding: 24px; }
+  #auth { display: flex; flex-direction: column; justify-content: center; padding: 24px; }
   .auth-logo { width: 92px; height: 92px; border-radius: 26px; background: var(--card); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 46px; margin: 0 auto; box-shadow: 0 0 30px 4px rgba(220,38,38,.35); }
   .enc-chip { display: block; width: fit-content; margin: 16px auto 10px; padding: 6px 14px; border-radius: 999px; background: rgba(5,150,105,.15); border: 1px solid rgba(5,150,105,.4); color: var(--emerald-txt); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; font-family: 'Plus Jakarta Sans'; }
   .brand { font-family: 'Plus Jakarta Sans'; color: var(--white); font-size: 27px; font-weight: 800; text-align: center; letter-spacing: -.02em; }
@@ -228,17 +228,6 @@
     <button id="auth-switch" class="switch">Don't have an account? <b>Create one</b></button>
   </div>
 
-  <!-- OTP -->
-  <div id="otp-screen" class="screen hidden">
-    <div class="auth-logo">📲</div>
-    <span class="enc-chip">● OTP Verification Active</span>
-    <div class="brand">Verify <span class="hz">OTP</span></div>
-    <div class="brand-sub" id="otp-sub">Enter the 6-digit code sent to your phone</div>
-    <input id="otp-input" maxlength="6" inputmode="numeric" placeholder="• • • • • •" style="text-align:center;font-size:24px;font-weight:800;letter-spacing:12px;font-family:'Plus Jakarta Sans';" />
-    <button id="otp-verify" class="btn">VERIFY &amp; SIGN IN →</button>
-    <button class="switch" onclick="backToLogin()">← Back to login</button>
-  </div>
-
   <!-- HEADER -->
   <div id="header" class="hidden">
     <button class="hamburger" onclick="openDrawer()">☰</button>
@@ -300,7 +289,7 @@
     </div>
     <div class="info-strip">
       <span class="ico">🛡️</span>
-      <span>Sends encrypted real-time GPS coordinates via <b style="color:#fff">SMS &amp; WhatsApp</b> to your 2 emergency contacts simultaneously.</span>
+      <span>Sends encrypted real-time GPS coordinates as an <b style="color:#fff">in-app alert</b> to your 2 emergency contacts simultaneously.</span>
     </div>
     <div class="card row">
       <div class="icon-tile green">✅</div>
@@ -423,7 +412,7 @@
     <div class="card row"><div class="icon-tile red">📝</div><div class="card-info"><div class="card-name">1. Create Your Account</div><div class="card-sub">Sign up with your name, city and phone. Your password is securely encrypted.</div></div></div>
     <div class="card row"><div class="icon-tile red">👥</div><div class="card-info"><div class="card-name">2. Add Emergency Contacts</div><div class="card-sub">Save up to 2 trusted responders — family or friends.</div></div></div>
     <div class="card row"><div class="icon-tile red">🆘</div><div class="card-info"><div class="card-name">3. Press SOS When in Danger</div><div class="card-sub">One tap dispatches an instant alert with your live GPS location.</div></div></div>
-    <div class="card row"><div class="icon-tile red">📲</div><div class="card-info"><div class="card-name">4. Contacts Get Notified</div><div class="card-sub">SMS + WhatsApp delivery with a Google Maps link to find you.</div></div></div>
+    <div class="card row"><div class="icon-tile red">📲</div><div class="card-info"><div class="card-name">4. Contacts Get Notified</div><div class="card-sub">Instant in-app push alert (HIFAZAT users only) with a Google Maps link to find you.</div></div></div>
     <div class="empty" style="margin-top:18px">HIFAZAT v1.0.0</div>
   </div>
 
@@ -511,37 +500,12 @@ $('auth-submit').onclick = async () => {
       $('auth-pass').value = '';
     } else {
       const res = await api('POST', '/auth/login', { phone, password });
-      if (res.data && res.data.otpRequired) {
-        $('otp-sub').textContent = 'Enter the 6-digit code sent to ' + phone;
-        $('auth').classList.add('hidden');
-        $('otp-screen').classList.remove('hidden');
-        $('otp-input').value = '';
-        $('otp-input').focus();
-        toast('📲 OTP sent to your phone number');
-      }
+      token = res.data.token;
+      user = res.data.user;
+      enterApp();
     }
   } catch (e) { toast('❌ ' + e.message); }
   $('auth-submit').disabled = false;
-};
-
-function backToLogin() {
-  $('otp-screen').classList.add('hidden');
-  $('auth').classList.remove('hidden');
-}
-
-$('otp-verify').onclick = async () => {
-  const otp = $('otp-input').value.trim();
-  const phone = $('auth-phone').value.trim();
-  if (otp.length !== 6) return toast('Please enter the 6-digit OTP code.');
-  $('otp-verify').disabled = true;
-  try {
-    const res = await api('POST', '/auth/verify-otp', { phone, otp });
-    token = res.data.token;
-    user = res.data.user;
-    $('otp-screen').classList.add('hidden');
-    enterApp();
-  } catch (e) { toast('❌ ' + e.message); }
-  $('otp-verify').disabled = false;
 };
 
 function enterApp() {
@@ -567,7 +531,6 @@ function logout() {
   token = null; user = null;
   stopLiveLocation();
   closeDrawer();
-  $('otp-screen').classList.add('hidden');
   $('header').classList.add('hidden');
   $('tabbar').classList.add('hidden');
   TABS.forEach(t => $(t).classList.add('hidden'));
@@ -590,7 +553,7 @@ function showTab(tab) {
 
 // ─── SOS ───
 $('sos').onclick = async () => {
-  if (!confirm('🚨 This will immediately alert your emergency contacts via SMS and WhatsApp. Continue?')) return;
+  if (!confirm('🚨 This will immediately send an in-app alert to your emergency contacts. Continue?')) return;
   $('sos').disabled = true;
   $('sos').querySelector('.small').textContent = 'DISPATCHING…';
   try {
@@ -600,7 +563,8 @@ $('sos').onclick = async () => {
       coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
     } catch {}
     const res = await api('POST', '/alerts/trigger', { ...coords, source: 'sos' });
-    toast('✅ Alert dispatched! Your emergency contacts have been notified.');
+    const sent = (res.data.dispatches || []).length, skipped = (res.data.skipped || []).length;
+    toast(skipped ? `✅ Alert sent to ${sent} contact(s). ${skipped} contact(s) skipped — not on HIFAZAT.` : '✅ Alert dispatched! Your emergency contacts have been notified.');
     setActiveAlert(res.data.alert);
     loadAlerts();
   } catch (e) { toast('❌ SOS failed: ' + e.message); }
@@ -711,8 +675,8 @@ async function loadContacts() {
           <div class="avatar">${c.name.split(' ').map(w => w.charAt(0)).slice(0,2).join('').toUpperCase()}</div>
           <div class="card-info">
             <div class="card-name">${c.name}${c.relation ? '<span class="card-rel">' + c.relation + '</span>' : ''}</div>
-            <div class="card-sub">✅ ${c.phone}</div>
-            <span class="badge green" style="margin-top:6px">✓ Verified &amp; Ready</span>
+            <div class="card-sub">${c.isAppUser ? '✅' : '⚠️'} ${c.phone}</div>
+            <span class="badge ${c.isAppUser ? 'green' : 'amber'}" style="margin-top:6px">${c.isAppUser ? '✓ On HIFAZAT — will get alerts' : '⚠ Not on HIFAZAT — no alerts'}</span>
           </div>
           <button class="remove" onclick="removeContact('${c.id}', '${c.name.replace(/'/g, '')}')">🗑</button>
         </div>`).join('');
@@ -729,10 +693,10 @@ $('c-add').onclick = async () => {
   if (!name || !phone) return toast('Name and phone number are required.');
   $('c-add').disabled = true;
   try {
-    await api('POST', '/contacts', { name, phone, relation: relation || undefined });
+    const res = await api('POST', '/contacts', { name, phone, relation: relation || undefined });
     $('c-name').value = ''; $('c-phone').value = ''; $('c-rel').value = '';
     loadContacts();
-    toast('✅ Emergency contact saved');
+    toast(res.data.isAppUser ? '✅ Emergency contact saved' : '⚠️ Saved, but ' + res.data.warning);
   } catch (e) { toast('❌ ' + e.message); }
   $('c-add').disabled = false;
 };
