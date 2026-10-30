@@ -22,7 +22,7 @@ function buildAlertMessage(
   longitude?: number | null,
   customMessage?: string | null,
 ): string {
-  const lines = [`${userName} has triggered an SOS and may need immediate help.`];
+  const lines = [`${userName} sent an EMERGENCY ALERT and may need immediate help.`];
 
   if (customMessage) {
     lines.push(`Message: ${customMessage}`);
@@ -67,7 +67,7 @@ export async function triggerAlert(req: AuthenticatedRequest, res: Response): Pr
     if (user.contacts.length === 0) {
       res.status(400).json({
         success: false,
-        message: 'No emergency contacts configured. Add at least one contact before triggering SOS.',
+        message: 'No emergency contacts configured. Add at least one contact before sending an alert.',
       });
       return;
     }
@@ -268,7 +268,7 @@ export async function cancelAlert(req: AuthenticatedRequest, res: Response): Pro
     const { dispatches, skipped } = await notifyContacts(req.userId!, {
       type: 'SOS_CANCELLED',
       title: 'ℹ️ HIFAZAT UPDATE',
-      body: `${existing.user.name} cancelled the SOS alert — it was a false alarm. No action needed.`,
+      body: `${existing.user.name} cancelled the emergency alert — it was a false alarm. No action needed.`,
       alertId: id,
     });
     res.json({ success: true, data: { alert, notified: dispatches.length, skipped } });

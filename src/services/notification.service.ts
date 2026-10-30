@@ -73,6 +73,7 @@ export interface NotifyResult {
 }
 
 const SKIP_REASON = 'Not registered on HIFAZAT app';
+const CRITICAL_TYPES = new Set<NotificationType>(['SOS', 'CHECKIN_NOT_SAFE', 'TRIP_OVERDUE']);
 
 export async function notifyContacts(senderId: string, input: NotifyInput): Promise<NotifyResult> {
   const { registered, unregistered } = await findRegisteredContacts(senderId);
@@ -123,6 +124,7 @@ export async function notifyContacts(senderId: string, input: NotifyInput): Prom
           ? await sendExpoPush(tokens, {
               title: input.title,
               body: input.body,
+              critical: CRITICAL_TYPES.has(input.type),
               data: {
                 type: input.type,
                 notificationId,

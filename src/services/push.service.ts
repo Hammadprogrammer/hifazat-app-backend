@@ -14,6 +14,8 @@ export interface PushPayload {
   title: string;
   body: string;
   data?: Record<string, unknown>;
+  /** Emergency (SOS / not-safe / overdue): siren channel + time-sensitive. Status updates are not critical. */
+  critical?: boolean;
 }
 
 interface ExpoTicket {
@@ -53,9 +55,13 @@ export async function sendExpoPush(tokens: string[], payload: PushPayload): Prom
       title: payload.title,
       body: payload.body,
       data: payload.data ?? {},
-      sound: 'default',
+      // Android: sound/vibration come from the app's "emergency" channel (siren, MAX importance).
+      // iOS: custom sound bundled in the app + time-sensitive interruption level.
+      sound: payload.critical ? 'siren.wav' : 'default',
       priority: 'high',
-      channelId: 'emergency',
+      channelId: payload.critical ? 'emergency' : 'default',
+      interruptionLevel: payload.critical ? 'timeSensitive' : 'active',
+      ttl: 3600,
     }));
 
     try {
