@@ -55,11 +55,11 @@ export async function sendExpoPush(tokens: string[], payload: PushPayload): Prom
       title: payload.title,
       body: payload.body,
       data: payload.data ?? {},
-      // Android: sound/vibration come from the app's "emergency_v2" channel (siren, MAX importance).
+      // Android: sound/vibration come from the app's "emergency" channel (siren, MAX importance).
       // iOS: custom sound bundled in the app + time-sensitive interruption level.
       sound: payload.critical ? 'siren.wav' : 'default',
       priority: 'high',
-      channelId: payload.critical ? 'emergency_v2' : 'default',
+      channelId: payload.critical ? 'emergency' : 'default',
       interruptionLevel: payload.critical ? 'timeSensitive' : 'active',
       ttl: 3600,
     }));
