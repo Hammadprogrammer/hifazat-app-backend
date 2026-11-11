@@ -60,7 +60,7 @@ export async function sendExpoPush(tokens: string[], payload: PushPayload): Prom
       sound: payload.critical ? 'siren.wav' : 'default',
       priority: 'high',
       channelId: payload.critical ? 'emergency' : 'default',
-      interruptionLevel: payload.critical ? 'timeSensitive' : 'active',
+      interruptionLevel: payload.critical ? 'time-sensitive' : 'active',
       ttl: 3600,
     }));
 
@@ -77,7 +77,10 @@ export async function sendExpoPush(tokens: string[], payload: PushPayload): Prom
           if (ticket.details?.error === 'DeviceNotRegistered') result.invalidTokens.push(chunk[idx]);
         }
       });
-      if (tickets.length === 0) result.failed += chunk.length;
+      if (tickets.length === 0) {
+        result.failed += chunk.length;
+        console.error('[push] Expo rejected request:', res.status, JSON.stringify(json.errors));
+      }
     } catch (err) {
       console.error('[push] Expo request failed:', err);
       result.failed += chunk.length;
