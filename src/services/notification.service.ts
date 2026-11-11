@@ -7,7 +7,7 @@
  */
 import { NotificationType } from '@prisma/client';
 import prisma from '../config/db';
-import { sendExpoPush } from './push.service';
+import { NATIVE_ALERT_PLATFORM, sendExpoPush } from './push.service';
 
 export interface ContactInfo {
   id: string;
@@ -103,9 +103,10 @@ export async function notifyContacts(senderId: string, input: NotifyInput): Prom
     ),
     prisma.device.findMany({
       where: { userId: { in: recipientIds } },
-      select: { userId: true, pushToken: true },
+      select: { userId: true, pushToken: true, platform: true },
     }),
   ]);
+  const nativeAlertTokens = new Set(devices.filter((d) => d.platform === NATIVE_ALERT_PLATFORM).map((d) => d.pushToken));
 
   const notifByRecipient = new Map(notifications.map((n) => [n.recipientId, n.id]));
   const tokensByUser = new Map<string, string[]>();
@@ -134,7 +135,7 @@ export async function notifyContacts(senderId: string, input: NotifyInput): Prom
                 latitude: input.latitude ?? null,
                 longitude: input.longitude ?? null,
               },
-            })
+            }, nativeAlertTokens)
           : { sent: 0, failed: 0, invalidTokens: [] };
       return {
         contact: { id: r.id, name: r.name, phone: r.phone },
